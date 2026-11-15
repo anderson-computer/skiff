@@ -1,0 +1,19 @@
+#!/usr/bin/python3
+"""Skiff SFTP launcher."""
+import os
+import sys
+
+# Installed layout: /opt/skiff/skiff
+# Dev layout: repo root (bin/..).
+here = os.path.dirname(os.path.realpath(__file__))
+for path in (os.path.join(here, ".."), "/opt/skiff"):
+    path = os.path.abspath(path)
+    if os.path.isdir(os.path.join(path, "skiff")):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        break
+
+from skiff.app import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

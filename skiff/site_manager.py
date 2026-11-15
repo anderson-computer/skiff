@@ -7,7 +7,6 @@ import os
 from typing import Dict, List, Optional
 
 from .config import default_site, load_sites, save_sites
-from .sudo import DEFAULT_SUDO_USER, SFTP_SERVER_CANDIDATES, SudoConfigError, server_path, sudo_user
 from .qtcompat import (
     QCheckBox,
     QComboBox,
@@ -90,6 +89,8 @@ class SiteManagerDialog(QDialog):
             self.save_password.setToolTip("Store in: %s" % self.store_label)
             self.password.textEdited.connect(
                 lambda t: t and self.save_password.setChecked(True))
+        # Typing a password on an "SSH agent / default keys" site means password auth.
+        self.password.textEdited.connect(self._password_typed)
         key_row = QWidget()
         key_l = QHBoxLayout(key_row)
         key_l.setContentsMargins(0, 0, 0, 0)
@@ -105,17 +106,6 @@ class SiteManagerDialog(QDialog):
         self.timeout.setValue(20)
         self.strict_host = QCheckBox("Verify host key against ~/.ssh/known_hosts")
         self.strict_host.setChecked(True)
-        self.use_sudo = QCheckBox("Connect with sudo (run SFTP server as root)")
-        self.use_sudo.setToolTip(
-            "Start the remote sftp-server with 'sudo -n'. The server must allow it without a\n"
-            "password (NOPASSWD), e.g.  user ALL=(root) NOPASSWD: %s" % SFTP_SERVER_CANDIDATES[0])
-        self.sudo_user = QLineEdit()
-        self.sudo_user.setPlaceholderText(DEFAULT_SUDO_USER)
-        self.sudo_user.setToolTip("Run the SFTP server as this user (default: root)")
-        self.sftp_server = QLineEdit()
-        self.sftp_server.setPlaceholderText("auto-detect")
-        self.sftp_server.setToolTip("Remote sftp-server path. Empty = try:\n" + "\n".join(SFTP_SERVER_CANDIDATES))
-        self.use_sudo.toggled.connect(self._sudo_changed)
 
         form.addRow("Name:", self.name)
         form.addRow("Protocol:", self.protocol)
@@ -130,9 +120,6 @@ class SiteManagerDialog(QDialog):
         form.addRow("Local directory:", self.local_dir)
         form.addRow("Timeout (s):", self.timeout)
         form.addRow("", self.strict_host)
-        form.addRow("", self.use_sudo)
-        form.addRow("sudo user:", self.sudo_user)
-        form.addRow("SFTP server path:", self.sftp_server)
         right.addWidget(form_box)
 
         note = QLabel(
@@ -218,9 +205,6 @@ class SiteManagerDialog(QDialog):
         site["local_dir"] = self.local_dir.text().strip()
         site["timeout"] = int(self.timeout.value())
         site["strict_host"] = self.strict_host.isChecked()
-        site["sudo"] = self.use_sudo.isChecked()
-        site["sudo_user"] = self.sudo_user.text().strip()
-        site["sftp_server"] = self.sftp_server.text().strip()
 
     def _load(self, site: Dict) -> None:
         self._current_id = site["id"]
@@ -241,15 +225,7 @@ class SiteManagerDialog(QDialog):
         self.local_dir.setText(site.get("local_dir") or os.path.expanduser("~"))
         self.timeout.setValue(int(site.get("timeout") or 20))
         self.strict_host.setChecked(bool(site.get("strict_host", True)))
-        self.use_sudo.setChecked(bool(site.get("sudo")))
-        self.sudo_user.setText(site.get("sudo_user") or "")
-        self.sftp_server.setText(site.get("sftp_server") or "")
-        self._sudo_changed(self.use_sudo.isChecked())
         self._auth_changed()
-
-    def _sudo_changed(self, on: bool) -> None:
-        self.sudo_user.setEnabled(bool(on))
-        self.sftp_server.setEnabled(bool(on))
 
     def _update_password_placeholder(self, site: Dict) -> None:
         if self.store_label is None:
@@ -333,6 +309,10 @@ class SiteManagerDialog(QDialog):
         if path:
             self.key_file.setText(path)
 
+    def _password_typed(self, text: str) -> None:
+        if text and self.auth.currentData() == "agent":
+            self.auth.setCurrentIndex(max(0, self.auth.findData("password")))
+
     def _auth_changed(self) -> None:
         auth = self.auth.currentData()
         self.key_file.setEnabled(auth == "key")
@@ -351,23 +331,7 @@ class SiteManagerDialog(QDialog):
         if not site or not site.get("host"):
             QMessageBox.warning(self, "Site Manager", "Enter a host name.")
             return
-        problem = sudo_problem(site)
-        if problem:
-            QMessageBox.warning(self, "Site Manager", problem)
-            return
         self._apply_password_actions()
         save_sites(self.sites)
         self.chosen = copy.deepcopy(site)
         self.accept()
-
-
-def sudo_problem(site: Dict) -> Optional[str]:
-    """Why the site's sudo settings can't be used, or None."""
-    if not site.get("sudo"):
-        return None
-    try:
-        sudo_user(site)
-        server_path(site)
-    except SudoConfigError as exc:
-        return str(exc)
-    return None

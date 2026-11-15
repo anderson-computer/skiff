@@ -6,7 +6,7 @@ import traceback
 from typing import Any, Dict, Optional
 
 from .qtcompat import QObject, QThread, pyqtSignal
-from .sftp_backend import SftpError, create_backend
+from .sftp_backend import AuthError, SftpError, UnknownHostKey, create_backend
 
 
 class SftpWorker(QObject):
@@ -17,6 +17,8 @@ class SftpWorker(QObject):
     transfer_done = pyqtSignal(str, bool, str)     # job_id, ok, message
     op_done = pyqtSignal(str, bool, str)           # kind, ok, message
     error = pyqtSignal(str)
+    auth_failed = pyqtSignal(str)             # server rejected the credentials
+    hostkey_unknown = pyqtSignal(object)      # UnknownHostKey: ask, then retry
     busy = pyqtSignal(bool, str)
 
     def __init__(self):
@@ -30,9 +32,11 @@ class SftpWorker(QObject):
             home = self.backend.connect(site)
             self._site = site
             label = "%s@%s:%s" % (site.get("username"), site.get("host"), site.get("port") or 22)
-            if getattr(self.backend, "sudo_user", ""):
-                label += "  [sudo: %s]" % self.backend.sudo_user
             self.connected.emit(home, label)
+        except AuthError as exc:
+            self.auth_failed.emit(str(exc))
+        except UnknownHostKey as exc:
+            self.hostkey_unknown.emit(exc)
         except SftpError as exc:
             self.error.emit(str(exc))
         except Exception as exc:

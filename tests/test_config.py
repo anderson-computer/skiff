@@ -29,6 +29,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(loaded[0]["host"], "192.168.1.10")
         self.assertEqual(loaded[0]["password"], "")
 
+    def test_old_sudo_keys_ignored(self):
+        # 1.2.0 wrote sudo / sudo_user / sftp_server; 1.3 loads such files and drops the keys.
+        import json
+        os.makedirs(os.path.dirname(config.sites_path()), exist_ok=True)
+        with open(config.sites_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 2, "sites": [{"id": "x1", "name": "old", "host": "h", "username": "u",
+                                                "sudo": True, "sudo_user": "root",
+                                                "sftp_server": "/usr/libexec/openssh/sftp-server"}]}, fh)
+        loaded = config.load_sites()
+        self.assertEqual([s["host"] for s in loaded], ["h"])
+        for key in ("sudo", "sudo_user", "sftp_server"):
+            self.assertNotIn(key, loaded[0])
+        config.save_sites(loaded)
+        with open(config.sites_path(), encoding="utf-8") as fh:
+            self.assertNotIn("sudo", fh.read())
+
     def test_password_never_written_even_when_saved(self):
         # save_password means "kept in the keychain/vault", never in sites.json.
         site = config.default_site()

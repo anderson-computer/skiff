@@ -85,10 +85,12 @@ def default_site() -> Dict[str, Any]:
         "local_dir": os.path.expanduser("~"),
         "timeout": 20,
         "strict_host": True,
-        "sudo": False,        # start the remote sftp-server through sudo -n
-        "sudo_user": "",      # "" = root
-        "sftp_server": "",    # "" = auto-detect
     }
+
+
+# Site keys written by older versions that are no longer used (1.2.0's sudo
+# mode). They are dropped on load, so the next save removes them.
+RETIRED_SITE_KEYS = ("sudo", "sudo_user", "sftp_server")
 
 
 def load_sites() -> List[Dict[str, Any]]:
@@ -107,6 +109,8 @@ def load_sites() -> List[Dict[str, Any]]:
                 continue
             site = default_site()
             site.update(raw)
+            for key in RETIRED_SITE_KEYS:
+                site.pop(key, None)
             out.append(site)
         return out
     except (OSError, json.JSONDecodeError, TypeError, ValueError):

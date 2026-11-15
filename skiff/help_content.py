@@ -23,6 +23,7 @@ SHORTCUTS: List[Tuple[str, str]] = [
     ("F1", "This help"),
     ("Ctrl+S", "Site Manager"),
     ("Ctrl+N", "New session (opens the Site Manager)"),
+    ("Ctrl+K", "Quick Connect: type a host (or user@host:port) and connect"),
     ("Ctrl+R", "Refresh both panes"),
     ("F2", "Rename the selected item"),
     ("F5", "Copy: upload or download, depending on the focused pane"),
@@ -48,19 +49,50 @@ empty, Skiff opens your remote home folder.
   • Timeout (s): how long to wait for the server, 5 to 120 seconds.
 Click Save to store the site, or Login to save and connect. Duplicate copies \
 a site; Delete removes it. Session > Disconnect closes the connection.
+Session > Quick Connect (Ctrl+K) connects without a saved site: type a host, \
+user@host:port or sftp://user@host:port. If a saved site has the same host \
+and port, its settings and saved password are used.
 
 Skiff uses python3-paramiko when it is installed (EPEL). Otherwise it drives \
 the system OpenSSH tools (ssh and sftp), so your ~/.ssh/config, ssh-agent and \
 keys are used as usual. With the OpenSSH backend, the server needs python3 to \
 list folders."""),
+    ("Logging in", """\
+Skiff asks for whatever is missing when you connect:
+  • No user name saved: a login window asks for the user name and password. \
+For SSH agent / key sites you can leave the password blank to try your keys \
+first.
+  • User name but no password (password sites, or nothing saved in the \
+keychain or vault): the login window asks for the password only.
+  • Key or agent site that the server refuses: Skiff asks for the password \
+and tries again.
+  • Wrong password: Skiff asks again, up to 3 tries, then shows the server's \
+answer.
+Tick "Save password" in the login window to keep the password (and the user \
+name) for next time, in the store chosen in Options ▸ Passwords. If saving \
+was off, Skiff uses the system keychain when one is running, otherwise the \
+encrypted vault.
+Passwords are never put on the command line, in the environment or in a \
+file, and Skiff never reads a terminal, so a login can't hang waiting for \
+input you can't see."""),
+    ("Opening a host from the command line", """\
+  skiff --host HOST [--user USER] [--port PORT] [--key PATH] [--password-fd N]
+  skiff sftp://[user@]host[:port][/path]
+Skiff opens and connects right away, asking for a missing user name or \
+password in the login window. --host also accepts user@host:port. Empty \
+values (e.g. --user with nothing after it) are allowed, so launchers can \
+pass --host {host} --user {user} --port {port} as is. Other options (such as \
+-platform offscreen) go to Qt. --key logs in with that private key file. \
+There is no password option on purpose: a program that starts Skiff (such as \
+Porthole's Open in Skiff) can pass the password through an inherited pipe \
+with --password-fd N, which Skiff reads once and closes; it is never saved."""),
     ("Host keys", """\
 "Verify host key against ~/.ssh/known_hosts" is on by default for new sites.
-  • With paramiko, a host that is not in ~/.ssh/known_hosts is refused, and a \
-key that changed is reported as a host key mismatch.
-  • With OpenSSH, ssh runs with StrictHostKeyChecking=yes.
-To trust a new server, connect once from a terminal (ssh -p PORT user@host) \
-and accept the key after you check its fingerprint. If you untick the box, \
-Skiff accepts new keys: OpenSSH saves them (accept-new) and paramiko accepts \
+The first time you connect to a server, Skiff shows its host key \
+fingerprint (SHA256, the same as ssh shows). Click Yes to trust it: Skiff \
+adds it to ~/.ssh/known_hosts and connects. A key that later changes is \
+refused as a host key mismatch. If you untick the box, Skiff accepts new \
+keys without asking: OpenSSH saves them (accept-new) and paramiko accepts \
 them for that session only.
 If the key changed on purpose (the server was rebuilt), remove the old line \
 with ssh-keygen -R host (or -R '[host]:port') and connect again."""),
@@ -70,9 +102,11 @@ Authentication has three choices:
 the closest match to WinSCP with Pageant.
   • Private key file: pick the key with the … button. If the key has a \
 passphrase, put it in the "Password / key passphrase" field.
-  • Password: type the password. Tick "Save password" to keep it in the \
-system keychain or the encrypted vault (see "Saved passwords"). If saving \
-is off or the box is unticked, the password is used for that login only.
+  • Password: type the password, or leave it empty to be asked at login \
+(see "Logging in"). Tick "Save password" to keep it in the system keychain \
+or the encrypted vault (see "Saved passwords").
+Typing a password on an SSH agent / default keys site switches it to \
+Password.
 With paramiko the password goes straight to paramiko. Without it, Skiff \
 hands it to ssh/sftp through SSH_ASKPASS and a private socket readable only \
 by you; it never appears in a file, the command line or the environment, \
@@ -108,42 +142,6 @@ Upgrading from Skiff 1.0: passwords that 1.0 kept in plain text in \
 sites.json are moved on first start into the store you pick (keychain \
 or vault), or deleted if you choose not to save them. sites.json never \
 holds a password after that."""),
-    ("Connecting with sudo (as root)", """\
-Tick "Connect with sudo (run SFTP server as root)" in the Site Manager to \
-browse and change files as root (or another user) on servers where you log \
-in as yourself. Skiff logs in as the site's user name as usual, then starts \
-the remote SFTP server with "sudo -n -u USER sftp-server" instead of the \
-normal SFTP subsystem.
-  • sudo user: who the SFTP server runs as. Empty means root.
-  • SFTP server path: empty means auto-detect. Skiff tries \
-/usr/libexec/openssh/sftp-server (RHEL, Rocky, Fedora), \
-/usr/lib/openssh/sftp-server (Debian, Ubuntu) and /usr/lib/ssh/sftp-server.
-While connected this way, the status bar shows a red "sudo: root" badge and \
-the title bar ends in [sudo: root]. The first upload, move, delete, rename \
-or chmod on each connection asks you to confirm, because root can overwrite \
-or delete any file, including system files.
-sudo must not ask for a password. The SFTP stream has no terminal for a \
-password prompt, so Skiff always runs sudo with -n and never asks for, \
-sends or stores a sudo password. Allow the sftp-server command without a \
-password on the server instead (see Setting up sudoers).
-Both backends support sudo. With paramiko the server is started on an SSH \
-session channel; with the OpenSSH tools Skiff passes the sudo command to \
-sftp -s, and listings and folder deletes go through the SFTP server too (so \
-the server doesn't need python3 or extra sudo rules)."""),
-    ("Setting up sudoers", """\
-On the server, run sudo visudo -f /etc/sudoers.d/skiff and add one line \
-(replace mike with the user you log in as):
-    mike ALL=(root) NOPASSWD: /usr/libexec/openssh/sftp-server
-Use /usr/lib/openssh/sftp-server on Debian or Ubuntu. Check the path with \
-ls -l on the server, and put the same path in the site's SFTP server path \
-box if it isn't one of the three Skiff tries.
-For a different sudo user, put that user in the parentheses, e.g. \
-(backup), and set sudo user to backup in the Site Manager.
-Test it from a terminal: ssh mike@server sudo -n -l \
-/usr/libexec/openssh/sftp-server should print the path rather than "a \
-password is required".
-This rule gives full file access as root over SFTP, the same as a root \
-login, so only add it for people who would be trusted with root."""),
     ("Browsing files", """\
 Each pane has a path box, plus Parent, Home, Root and Refresh buttons. Type a \
 path and press Enter to jump there. Click a column header to sort. Folders \
@@ -188,7 +186,18 @@ deletes, and where passwords are kept.
 To start fresh, quit Skiff and delete ~/.config/skiff/. To move your sites \
 to another computer, copy sites.json."""),
     ("Troubleshooting", """\
-  • "Host key mismatch" or "not found in known_hosts": see Host keys.
+  • Could not log in on a new computer: Skiff 1.2 and older refused servers \
+that weren't in ~/.ssh/known_hosts yet and did not ask for a missing \
+password. 1.3 shows the host key and asks for the user name and password.
+  • "Host key mismatch": see Host keys.
+  • "Login failed … rejected the password 3 times": check the user name, \
+Caps Lock, and that the server allows password logins \
+(PasswordAuthentication or KbdInteractiveAuthentication in sshd_config).
+  • "The server is delaying new logins … retrying" or "Connection closed" / \
+"Error reading SSH protocol banner" right after failed logins: newer OpenSSH \
+servers (Rocky 9.6+ and 10) refuse new connections from an address for a \
+while after failed logins (PerSourcePenalties). Skiff waits and retries for \
+up to a minute; if it still fails, wait a few minutes and try again.
   • "Authentication failed": check the user name and auth type. For key \
 auth, check that the key file exists and the server has the public key in \
 ~/.ssh/authorized_keys. For agent auth, run ssh-add -l to see loaded keys.
@@ -204,17 +213,6 @@ KWallet, or switch to the encrypted vault in Options ▸ Passwords.
 from EPEL, or use key or agent auth.
   • Remote folders do not list with the OpenSSH backend: the server needs \
 python3, or install python3-paramiko on this computer.
-  • "sudo requires a password on this host": sudo wants a password for the \
-sftp-server command. Add the NOPASSWD line from Setting up sudoers. Skiff \
-does not support sudo passwords.
-  • "may not run … with sudo": the rule is missing or names another path or \
-user. Compare sudo -n -l on the server with the site's sudo user and SFTP \
-server path.
-  • "Could not find sftp-server": set the SFTP server path in the Site \
-Manager (find it with: grep -ri sftp /etc/ssh/sshd_config*).
-  • With sudo and the OpenSSH backend, a symlink to a folder shows as a link \
-and can't be opened; type the target path in the path box, or install \
-python3-paramiko.
   • Window looks wrong on Wayland: try QT_QPA_PLATFORM=xcb skiff.
   • Command-line: skiff --help and skiff --version."""),
 ]

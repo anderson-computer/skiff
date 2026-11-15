@@ -11,7 +11,7 @@ import subprocess
 import time
 from typing import Callable, Dict, List, Optional
 
-from . import sudo as sudo_mod
+from . import hostkeys
 from .models import FileEntry, posix_join, posix_parent
 
 ProgressCb = Optional[Callable[[int, int], None]]
@@ -21,11 +21,24 @@ class SftpError(Exception):
     pass
 
 
-class BaseSftp:
-    #: The user the remote SFTP server runs as when the site uses sudo
-    #: ("" = the login user, no sudo).
-    sudo_user = ""
+class AuthError(SftpError):
+    """The server rejected the user name / password / key. The window
+    re-prompts for credentials (up to 3 tries) instead of just failing."""
 
+
+class UnknownHostKey(SftpError):
+    """The server's host key isn't in ~/.ssh/known_hosts yet (strict checking
+    on). Carries the key so the window can show its fingerprint and, if the
+    user accepts, add it and retry."""
+
+    def __init__(self, host: str, port: int, key_type: str, key_b64: str):
+        self.host, self.port, self.key_type, self.key_b64 = host, int(port or 22), key_type, key_b64
+        self.fingerprint = hostkeys.fingerprint(key_b64)
+        super().__init__("The host key for %s is not known yet (%s %s)."
+                         % (hostkeys.host_entry(host, self.port), key_type, self.fingerprint))
+
+
+class BaseSftp:
     def connect(self, site: Dict) -> str:
         raise NotImplementedError
 
@@ -81,8 +94,12 @@ class ParamikoBackend(BaseSftp):
         self._home = "/"
 
     def connect(self, site: Dict) -> str:
+        import logging
         import paramiko
 
+        # paramiko logs dropped connections as tracebacks on stderr; Skiff
+        # reports them in the window instead.
+        logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
         host = (site.get("host") or "").strip()
         if not host:
             raise SftpError("Host is required")
@@ -90,15 +107,24 @@ class ParamikoBackend(BaseSftp):
         username = (site.get("username") or "").strip()
         if not username:
             raise SftpError("Username is required")
+        if host.startswith("-") or username.startswith("-"):
+            raise SftpError("Host and user names can't start with '-'")
         timeout = int(site.get("timeout") or 20)
         auth = site.get("auth") or "agent"
 
         client = paramiko.SSHClient()
-        known = os.path.expanduser("~/.ssh/known_hosts")
+        known = hostkeys.known_hosts_path()
         if os.path.isfile(known):
-            client.load_host_keys(known)
+            try:
+                client.load_host_keys(known)
+            except (IOError, paramiko.SSHException) as exc:
+                raise SftpError("Could not read %s: %s" % (known, exc)) from exc
         if site.get("strict_host", True):
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            class _AskPolicy(paramiko.MissingHostKeyPolicy):
+                # Unknown host: hand the key to the window to confirm.
+                def missing_host_key(self, _client, _hostname, key):
+                    raise UnknownHostKey(host, port, key.get_name(), key.get_base64())
+            client.set_missing_host_key_policy(_AskPolicy())
         else:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -124,25 +150,31 @@ class ParamikoBackend(BaseSftp):
 
         try:
             client.connect(**kwargs)
+        except SftpError:
+            client.close()
+            raise
         except paramiko.ssh_exception.BadHostKeyException as exc:
+            client.close()
             raise SftpError(
                 "Host key mismatch for %s. Remove the old key from ~/.ssh/known_hosts if this is expected."
                 % host
             ) from exc
         except paramiko.AuthenticationException as exc:
-            raise SftpError("Authentication failed for %s@%s" % (username, host)) from exc
-        except (paramiko.SSHException, socket.error, OSError) as exc:
+            client.close()
+            raise AuthError("Authentication failed for %s@%s%s" % (
+                username, host, "" if auth == "password" else " (keys / agent were not accepted)")) from exc
+        except paramiko.SSHException as exc:
+            client.close()
+            if "No authentication methods available" in str(exc) or "not a valid" in str(exc).lower():
+                # agent/key auth with no usable key on this computer
+                raise AuthError("No SSH key or agent identity was accepted for %s@%s" % (username, host)) from exc
+            raise SftpError("Could not connect to %s:%s — %s" % (host, port, exc)) from exc
+        except (socket.error, OSError, EOFError) as exc:
+            client.close()
             raise SftpError("Could not connect to %s:%s — %s" % (host, port, exc)) from exc
 
-        as_user = ""
         try:
-            if sudo_mod.enabled(site):
-                sftp, as_user = self._open_sudo_sftp(paramiko, client, site, username, timeout)
-            else:
-                sftp = client.open_sftp()
-        except SftpError:
-            client.close()
-            raise
+            sftp = client.open_sftp()
         except Exception as exc:
             client.close()
             raise SftpError("SFTP subsystem failed: %s" % exc) from exc
@@ -150,45 +182,13 @@ class ParamikoBackend(BaseSftp):
         self.close()
         self._client = client
         self._sftp = sftp
-        self.sudo_user = as_user
         try:
             self._home = sftp.normalize(".")
         except Exception:
             self._home = "/"
         return self._home
 
-    @staticmethod
-    def _open_sudo_sftp(paramiko, client, site: Dict, username: str, timeout: int):
-        """Start sftp-server through ``sudo -n`` on a session channel and speak
-        SFTP over it (no subsystem request, no TTY, no password prompt)."""
-        try:
-            as_user = sudo_mod.sudo_user(site)
-            path = sudo_mod.server_path(site)
-        except sudo_mod.SudoConfigError as exc:
-            raise SftpError(str(exc)) from exc
-        if not path:
-            _, out, _ = client.exec_command("sh -c %s" % shlex.quote(sudo_mod.detect_script()), timeout=timeout)
-            path = sudo_mod.parse_detect(out.read().decode("utf-8", "replace"))
-            if not path:
-                raise SftpError(sudo_mod.not_found_message())
-        chan = client.get_transport().open_session(timeout=timeout)
-        chan.settimeout(timeout)
-        chan.exec_command(sudo_mod.sudo_command(as_user, path))
-        try:
-            sftp = paramiko.SFTPClient(chan)
-        except Exception as exc:
-            err = _drain_stderr(chan)
-            try:
-                chan.close()
-            except Exception:
-                pass
-            msg = sudo_mod.explain_failure(err, username, as_user, path)
-            raise SftpError(msg or "sudo SFTP server did not start (%s): %s" % (path, err.strip() or exc)) from exc
-        chan.settimeout(None)
-        return sftp, as_user
-
     def close(self) -> None:
-        self.sudo_user = ""
         if self._sftp is not None:
             try:
                 self._sftp.close()
@@ -360,8 +360,6 @@ class OpenSSHBackend(BaseSftp):
         self._home = "/"
         self._askpass_token = None
         self._askpass_env: Dict[str, str] = {}
-        self._sudo_cmd = ""
-        self._sudo_info = ("", "", "")  # login user, sudo user, sftp-server path
 
     def connect(self, site: Dict) -> str:
         host = (site.get("host") or "").strip()
@@ -370,56 +368,47 @@ class OpenSSHBackend(BaseSftp):
         username = (site.get("username") or "").strip()
         if not username:
             raise SftpError("Username is required")
+        if host.startswith("-") or username.startswith("-"):
+            raise SftpError("Host and user names can't start with '-'")
         self._cleanup_askpass()
-        self._sudo_cmd = ""
-        self.sudo_user = ""
-        try:
-            as_user = sudo_mod.sudo_user(site) if sudo_mod.enabled(site) else ""
-            server = sudo_mod.server_path(site) if as_user else ""
-        except sudo_mod.SudoConfigError as exc:
-            raise SftpError(str(exc)) from exc
         self._site = dict(site)
         secret = site.get("password") or ""
         if secret and site.get("auth") in ("password", "key"):
             # Hand the password / key passphrase to ssh through the private
             # askpass socket (never a file, argv or environment value).
             from .askpass_server import password_handler, shared_server
-            srv = shared_server()
-            self._askpass_token = srv.register(password_handler(secret))
-            self._askpass_env = srv.env_for(self._askpass_token)
+            server = shared_server()
+            self._askpass_token = server.register(password_handler(secret))
+            self._askpass_env = server.env_for(self._askpass_token)
         self._site.pop("password", None)
-        # Probe + discover home (and, for sudo, the sftp-server path).
-        probe = ["pwd"] if not as_user or server else ["sh", "-c", "pwd; " + sudo_mod.detect_script()]
-        code, out, err = self._ssh(probe, timeout=int(site.get("timeout") or 20))
+        # Probe + discover home.
+        code, out, err = self._ssh(["pwd"], timeout=int(site.get("timeout") or 20))
         if code != 0:
             self._cleanup_askpass()
-            raise SftpError(err.strip() or out.strip() or "SSH connection failed")
-        lines = [l for l in out.strip().splitlines() if not l.startswith(sudo_mod.DETECT_MARK)]
-        self._home = lines[0].strip() if lines else "/"
-        if as_user:
-            server = server or sudo_mod.parse_detect(out)
-            if not server:
-                self._cleanup_askpass()
-                raise SftpError(sudo_mod.not_found_message())
-            self._sudo_cmd = sudo_mod.sudo_command(as_user, server)
-            self._sudo_info = (site.get("username") or "", as_user, server)
-            try:
-                out = self._sftp_batch(["pwd"], timeout=int(site.get("timeout") or 20) + 10)
-            except SftpError:
-                self._cleanup_askpass()
-                self._sudo_cmd = ""
-                raise
-            for line in out.splitlines():
-                if line.startswith("Remote working directory:"):
-                    self._home = line.split(":", 1)[1].strip() or self._home
-            self.sudo_user = as_user
+            self._raise_connect_error(site, err.strip() or out.strip() or "SSH connection failed")
+        self._home = out.strip().splitlines()[-1] if out.strip() else "/"
         return self._home
+
+    def _raise_connect_error(self, site: Dict, message: str) -> None:
+        host, port = (site.get("host") or "").strip(), int(site.get("port") or 22)
+        low = message.lower()
+        if "remote host identification has changed" in low or "host key for" in low and "has changed" in low:
+            raise SftpError(
+                "Host key mismatch for %s. Remove the old key with ssh-keygen -R '%s' if this is expected."
+                % (host, hostkeys.host_entry(host, port)))
+        if "host key verification failed" in low or "host key is known for" in low:
+            keys = hostkeys.scan(host, port, int(site.get("timeout") or 20))
+            if keys:
+                raise UnknownHostKey(host, port, keys[0][0], keys[0][1])
+            raise SftpError("The host key for %s is not in ~/.ssh/known_hosts and could not be "
+                            "read from the server.\n\n%s" % (host, message))
+        if "permission denied" in low or "too many authentication failures" in low:
+            raise AuthError(message.splitlines()[-1] if message else "Authentication failed")
+        raise SftpError(message)
 
     def close(self) -> None:
         self._cleanup_askpass()
         self._site = None
-        self._sudo_cmd = ""
-        self.sudo_user = ""
 
     def home(self) -> str:
         return self._home
@@ -440,6 +429,11 @@ class OpenSSHBackend(BaseSftp):
         if self._askpass_token:
             # One try with the saved password, so a wrong one can't lock the account.
             opts += ["-o", "NumberOfPasswordPrompts=1"]
+        if site.get("auth") == "password":
+            # Password sites: password or keyboard-interactive only, so a key
+            # passphrase prompt never receives the login password.
+            opts += ["-o", "PreferredAuthentications=password,keyboard-interactive",
+                     "-o", "PubkeyAuthentication=no", "-o", "GSSAPIAuthentication=no"]
         if site.get("auth") == "key" and site.get("key_file"):
             opts += ["-i", os.path.expanduser(site["key_file"])]
         return opts
@@ -471,6 +465,7 @@ class OpenSSHBackend(BaseSftp):
         try:
             proc = subprocess.run(
                 cmd,
+                stdin=subprocess.DEVNULL,  # never read a terminal; prompts go to askpass
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=self._env(),
@@ -491,12 +486,7 @@ class OpenSSHBackend(BaseSftp):
         # Options go before "-b": sftp turns -b into "-oBatchMode yes" at the
         # point it parses it, and ssh keeps the first value it sees, so our
         # BatchMode=no (needed for the askpass password) must come first.
-        cmd = ["sftp"] + self._base_opts(sftp=True)
-        if self._sudo_cmd:
-            # Start the remote sftp-server through "sudo -n" instead of the
-            # sshd sftp subsystem (-s with a "/" runs it as a command).
-            cmd += ["-s", self._sudo_cmd]
-        cmd += ["-b", "-", self._target()]
+        cmd = ["sftp"] + self._base_opts(sftp=True) + ["-b", "-", self._target()]
         try:
             proc = subprocess.run(
                 cmd,
@@ -513,18 +503,11 @@ class OpenSSHBackend(BaseSftp):
         err = proc.stderr.decode("utf-8", "replace")
         out = proc.stdout.decode("utf-8", "replace")
         if proc.returncode != 0:
-            if self._sudo_cmd:
-                login, as_user, server = self._sudo_info
-                msg = sudo_mod.explain_failure(err, login, as_user, server)
-                if msg:
-                    raise SftpError(msg)
             raise SftpError(err.strip() or out.strip() or "sftp command failed")
         return out
 
     def listdir(self, path: str, show_hidden: bool) -> List[FileEntry]:
         path = path or self._home
-        if self._sudo_cmd:
-            return self._listdir_sftp(path, show_hidden)
         script = (
             "import json,os,stat,sys\n"
             "p=sys.argv[1]\n"
@@ -573,45 +556,11 @@ class OpenSSHBackend(BaseSftp):
         entries.sort(key=lambda e: (not e.is_parent, not e.is_dir, e.name.lower()))
         return entries
 
-    def _listdir_sftp(self, path: str, show_hidden: bool) -> List[FileEntry]:
-        # sudo mode: list through the (root) sftp-server, because a remote
-        # shell command would run as the login user.
-        out = self._sftp_batch(["cd %s" % _sftp_quote(path), "ls -la"], timeout=60)
-        entries: List[FileEntry] = []
-        parent = posix_parent(path)
-        if parent is not None:
-            entries.append(
-                FileEntry(name="..", path=parent, size=0, mtime=0, mode=stat.S_IFDIR, is_dir=True)
-            )
-        for name, mode, size, mtime, owner, group in sudo_mod.parse_ls(out):
-            if not show_hidden and name.startswith("."):
-                continue
-            entries.append(
-                FileEntry(name=name, path=posix_join(path, name), size=size, mtime=mtime, mode=mode,
-                          is_dir=stat.S_ISDIR(mode), is_link=stat.S_ISLNK(mode), owner=owner, group=group)
-            )
-        entries.sort(key=lambda e: (not e.is_parent, not e.is_dir, e.name.lower()))
-        return entries
-
-    def _rmtree_lines(self, path: str) -> List[str]:
-        lines: List[str] = []
-        for entry in self._listdir_sftp(path, True):
-            if entry.is_parent:
-                continue
-            if entry.is_dir and not entry.is_link:
-                lines += self._rmtree_lines(entry.path)
-            else:
-                lines.append("rm %s" % _sftp_quote(entry.path))
-        lines.append("rmdir %s" % _sftp_quote(path))
-        return lines
-
     def mkdir(self, path: str) -> None:
         self._sftp_batch(["-mkdir %s" % _sftp_quote(path)])
 
     def remove(self, path: str, is_dir: bool) -> None:
-        if is_dir and self._sudo_cmd:
-            self._sftp_batch(self._rmtree_lines(path))
-        elif is_dir:
+        if is_dir:
             code, _, err = self._ssh(["rm", "-rf", "--", path])
             if code != 0:
                 raise SftpError(err.strip() or "rm -rf failed")
@@ -651,22 +600,3 @@ class OpenSSHBackend(BaseSftp):
 
 def _sftp_quote(path: str) -> str:
     return "'" + path.replace("'", r"'\''") + "'"
-
-
-def _drain_stderr(chan, wait: float = 3.0) -> str:
-    """Collect what the remote command wrote to stderr before it exited."""
-    deadline = time.time() + wait
-    chunks = []
-    while time.time() < deadline:
-        got = False
-        while chan.recv_stderr_ready():
-            data = chan.recv_stderr(4096)
-            if not data:
-                break
-            chunks.append(data)
-            got = True
-        if chan.exit_status_ready() and not chan.recv_stderr_ready():
-            break
-        if not got:
-            time.sleep(0.05)
-    return b"".join(chunks).decode("utf-8", "replace")

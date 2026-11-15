@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           skiff
-Version:        1.2.0
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        WinSCP-style dual-pane SFTP client for Rocky Linux 9 and 10
 License:        MIT
@@ -60,8 +60,9 @@ Features:
  - Transfer queue with progress
  - Saved passwords in the system keychain (libsecret) or an encrypted
    vault file (AES-256-GCM, scrypt master password)
- - Optional per-site sudo mode: run the remote sftp-server as root (or
-   another user) with passwordless sudo
+ - Login window for missing user names / passwords, host key confirmation
+ - Quick Connect and "skiff --host H --user U --port P" / sftp:// URLs
+ - Credential hand-off for launchers: --key PATH, --password-fd N
  - Uses python3-paramiko when installed (EPEL), otherwise system OpenSSH
 
 %prep
@@ -120,6 +121,31 @@ fi
 %{_datadir}/pixmaps/skiff.svg
 
 %changelog
+* Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.3.0-1
+- Fix logins on a fresh install ("could not log in"): servers not yet in
+  ~/.ssh/known_hosts were refused (paramiko: "not found in known_hosts",
+  OpenSSH: "Host key verification failed"); Skiff now shows the SHA256
+  fingerprint and, if accepted, adds the key to ~/.ssh/known_hosts
+- Fix logins with no saved password: Skiff never asked for one unless "Save
+  password" was ticked, so the server got an empty password (or none with
+  the default "SSH agent / default keys"). A login window now asks for a
+  missing user name and/or password, falls back to the password when keys
+  are refused, re-prompts on a wrong password (3 tries) and can save it
+- Typing a password on an "SSH agent / default keys" site uses password auth
+- When sshd (PerSourcePenalties, Rocky 9.6+/10) drops connections after
+  failed logins, Skiff shows "delaying new logins" and retries instead of
+  failing with "Connection closed"
+- OpenSSH backend: ssh never reads a terminal (stdin is /dev/null, prompts
+  go to the private askpass socket); password sites use password or
+  keyboard-interactive auth only; clear auth / host key error messages
+- Session > Quick Connect (Ctrl+K) and command-line connect:
+  skiff --host H [--user U] [--port P], or skiff sftp://user@host:port/path
+- Credential hand-off for launchers (Porthole "Open in Skiff"):
+  --key PATH and --password-fd N (password read once from an inherited
+  pipe, never from a terminal, argv or the environment, and never saved)
+- Removed the 1.2.0 sudo mode (Site Manager fields, backend code, badge and
+  warning, help); old "sudo" keys in sites.json are ignored and dropped
+
 * Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.2.0-1
 - Site Manager: "Connect with sudo (run SFTP server as root)" with an
   optional sudo user (default root) and sftp-server path (default:

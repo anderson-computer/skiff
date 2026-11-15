@@ -6,6 +6,7 @@ import os
 import sys
 
 from . import APP_ID, APP_NAME, __version__
+from .cli import parse_cli
 from .qtcompat import QApplication, QIcon, Qt, QTimer
 
 
@@ -39,24 +40,9 @@ def _load_icon() -> QIcon:
     return QIcon()
 
 
-def _parse_cli(argv):
-    """Handle --help/--version before Qt starts; pass Qt options through."""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        prog=APP_ID,
-        description=APP_NAME + " - WinSCP-style dual-pane SFTP client.",
-        epilog="Standard Qt options (e.g. -platform offscreen) are passed through. "
-        "Sites are stored in ~/.config/" + APP_ID + "/sites.json.",
-    )
-    parser.add_argument("--version", action="version", version=APP_NAME + " " + __version__)
-    _, rest = parser.parse_known_args(argv[1:])
-    return [argv[0]] + rest
-
-
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
-    argv = _parse_cli(argv)
+    argv, target = parse_cli(argv)
     # Wayland + X11 both work with Qt; this keeps GNOME Wayland and KDE Plasma happy.
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 
@@ -73,7 +59,12 @@ def main(argv=None) -> int:
     if not icon.isNull():
         win.setWindowIcon(icon)
     win.show()
-    QTimer.singleShot(0, win.run_startup_tasks)
+    def _startup():
+        win.run_startup_tasks()
+        if target:
+            win.quick_connect(target)
+
+    QTimer.singleShot(0, _startup)
     try:
         return app.exec_()
     except AttributeError:

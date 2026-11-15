@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Skiff SFTP
+GenericName=SFTP client
+Comment=WinSCP-style dual-pane SFTP file transfer
+Exec=skiff
+Icon=skiff
+Terminal=false
+Categories=Network;FileTransfer;Qt;
+Keywords=sftp;scp;winscp;ftp;ssh;file;transfer;
+StartupNotify=true
+StartupWMClass=skiff
+X-GNOME-UsesNotifications=false

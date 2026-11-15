@@ -8,7 +8,6 @@ import shlex
 import socket
 import stat
 import subprocess
-import tempfile
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -315,7 +314,8 @@ class OpenSSHBackend(BaseSftp):
     def __init__(self):
         self._site = None
         self._home = "/"
-        self._askpass = None
+        self._askpass_token = None
+        self._askpass_env: Dict[str, str] = {}
 
     def connect(self, site: Dict) -> str:
         host = (site.get("host") or "").strip()
@@ -326,11 +326,19 @@ class OpenSSHBackend(BaseSftp):
             raise SftpError("Username is required")
         self._cleanup_askpass()
         self._site = dict(site)
-        if site.get("auth") == "password" and site.get("password"):
-            self._askpass = self._write_askpass(site["password"])
+        secret = site.get("password") or ""
+        if secret and site.get("auth") in ("password", "key"):
+            # Hand the password / key passphrase to ssh through the private
+            # askpass socket (never a file, argv or environment value).
+            from .askpass_server import password_handler, shared_server
+            server = shared_server()
+            self._askpass_token = server.register(password_handler(secret))
+            self._askpass_env = server.env_for(self._askpass_token)
+        self._site.pop("password", None)
         # Probe + discover home.
         code, out, err = self._ssh(["pwd"], timeout=int(site.get("timeout") or 20))
         if code != 0:
+            self._cleanup_askpass()
             raise SftpError(err.strip() or out.strip() or "SSH connection failed")
         self._home = out.strip().splitlines()[-1] if out.strip() else "/"
         return self._home
@@ -350,40 +358,33 @@ class OpenSSHBackend(BaseSftp):
         # ssh takes the port as -p; sftp uses -P (its -p means "preserve").
         site = self._site or {}
         opts = [
-            "-o", "BatchMode=%s" % ("no" if site.get("auth") == "password" else "yes"),
+            "-o", "BatchMode=%s" % ("no" if self._askpass_token else "yes"),
             "-o", "StrictHostKeyChecking=%s" % ("yes" if site.get("strict_host", True) else "accept-new"),
             "-o", "ConnectTimeout=%s" % int(site.get("timeout") or 20),
             "-P" if sftp else "-p", str(int(site.get("port") or 22)),
         ]
+        if self._askpass_token:
+            # One try with the saved password, so a wrong one can't lock the account.
+            opts += ["-o", "NumberOfPasswordPrompts=1"]
         if site.get("auth") == "key" and site.get("key_file"):
             opts += ["-i", os.path.expanduser(site["key_file"])]
         return opts
 
     def _env(self) -> Dict[str, str]:
         env = os.environ.copy()
-        if self._askpass:
-            env["SSH_ASKPASS"] = self._askpass
-            env["SSH_ASKPASS_REQUIRE"] = "force"
+        for key in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SKIFF_ASKPASS_SOCK", "SKIFF_ASKPASS_TOKEN"):
+            env.pop(key, None)
+        if self._askpass_token:
+            env.update(self._askpass_env)
             env["DISPLAY"] = env.get("DISPLAY") or ":0"
         return env
 
-    def _write_askpass(self, password: str) -> str:
-        fd, path = tempfile.mkstemp(prefix="skiff-askpass-", suffix=".sh")
-        os.close(fd)
-        with open(path, "w", encoding="utf-8") as fh:
-            # Pass the password as an argument, not as the printf format,
-            # so passwords containing % or backslashes are sent verbatim.
-            fh.write("#!/bin/sh\nprintf '%%s\\n' '%s'\n" % password.replace("'", "'\\''"))
-        os.chmod(path, 0o700)
-        return path
-
     def _cleanup_askpass(self) -> None:
-        if self._askpass and os.path.isfile(self._askpass):
-            try:
-                os.remove(self._askpass)
-            except OSError:
-                pass
-        self._askpass = None
+        if self._askpass_token:
+            from .askpass_server import shared_server
+            shared_server().unregister(self._askpass_token)
+        self._askpass_token = None
+        self._askpass_env = {}
 
     def _ssh(self, remote_cmd: List[str], timeout: int = 60):
         if not self._site:
@@ -413,7 +414,10 @@ class OpenSSHBackend(BaseSftp):
         if not self._site:
             raise SftpError("Not connected")
         body = "\n".join(lines) + "\n"
-        cmd = ["sftp", "-b", "-"] + self._base_opts(sftp=True) + [self._target()]
+        # Options go before "-b": sftp turns -b into "-oBatchMode yes" at the
+        # point it parses it, and ssh keeps the first value it sees, so our
+        # BatchMode=no (needed for the askpass password) must come first.
+        cmd = ["sftp"] + self._base_opts(sftp=True) + ["-b", "-", self._target()]
         try:
             proc = subprocess.run(
                 cmd,

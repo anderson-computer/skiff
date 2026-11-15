@@ -7,7 +7,8 @@ import shutil
 from typing import Dict, List, Optional
 
 from . import APP_NAME, __version__
-from .config import load_settings, load_sites, save_settings
+from .config import load_settings, load_sites, plaintext_passwords, save_settings
+from .passwords import PasswordManager, PasswordOptionsDialog
 from .file_panel import FilePanel
 from .models import FileEntry, posix_join
 from .qtcompat import (
@@ -32,6 +33,7 @@ from .qtcompat import (
     QWidget,
     Qt,
     pyqtSignal,
+    qt_echo,
     qt_key,
     qt_msg_btn,
     qt_orient,
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.settings = load_settings()
+        self.passwords = PasswordManager(self, self.settings, status=self._flash_status)
         self.resize(int(self.settings.get("window_width") or 1200),
                     int(self.settings.get("window_height") or 760))
         self.site: Optional[Dict] = None
@@ -156,6 +159,9 @@ class MainWindow(QMainWindow):
         self.act_confirm = opts.addAction("&Confirm deletes")
         self.act_confirm.setCheckable(True)
         self.act_confirm.setChecked(bool(self.settings.get("confirm_delete", True)))
+        opts.addSeparator()
+        self.act_passwords = opts.addAction("&Passwords…")
+        self.act_lock_vault = opts.addAction("&Lock Password Vault")
 
         helpm = self.menuBar().addMenu("&Help")
         self.act_help = helpm.addAction("Skiff &Help")
@@ -226,6 +232,8 @@ class MainWindow(QMainWindow):
             lambda v: self.settings.__setitem__("confirm_delete", bool(v))
         )
         self.act_about.triggered.connect(self._about)
+        self.act_passwords.triggered.connect(self._password_options)
+        self.act_lock_vault.triggered.connect(self.passwords.lock_vault)
         self.act_help.triggered.connect(self._help)
 
         self.local.path_changed.connect(lambda p: self.local.set_path(p))
@@ -264,7 +272,7 @@ class MainWindow(QMainWindow):
         self._open_sites()
 
     def _open_sites(self) -> None:
-        dlg = SiteManagerDialog(self, load_sites())
+        dlg = SiteManagerDialog(self, load_sites(), passwords=self._password_manager_or_none())
         from .qtcompat import exec_dialog
         if exec_dialog(dlg) and dlg.chosen:
             self._login(dlg.chosen)
@@ -272,6 +280,20 @@ class MainWindow(QMainWindow):
     def _login(self, site: Dict) -> None:
         if self.connected:
             self.req_disconnect.emit()
+        site = dict(site)
+        if not site.get("password") and site.get("auth") in ("password", "key") \
+                and site.get("save_password"):
+            # Saved password from the keychain / vault (unlocks the vault once per session).
+            saved = self.passwords.get(site)
+            if saved is not None:
+                site["password"] = saved
+            elif site.get("auth") == "password":
+                text, ok = QInputDialog.getText(
+                    self, APP_NAME, "Password for %s@%s:" % (site.get("username"), site.get("host")),
+                    echo=qt_echo("Password"))
+                if not ok:
+                    return
+                site["password"] = text
         self.site = site
         local = site.get("local_dir") or os.path.expanduser("~")
         if os.path.isdir(os.path.expanduser(local)):
@@ -582,6 +604,33 @@ class MainWindow(QMainWindow):
         self._kick_queue()
 
     # ── Misc ──────────────────────────────────────────────────────────────
+
+    # ── Saved passwords ───────────────────────────────────────────────────
+
+    def _flash_status(self, message: str) -> None:
+        self.statusBar().showMessage(message, 6000)
+
+    def _password_manager_or_none(self):
+        return self.passwords if self.passwords.label else None
+
+    def _password_options(self) -> None:
+        ring = self.passwords.keyring()
+        dlg = PasswordOptionsDialog(self, self.settings, ring.available, ring.error or "")
+        dlg.change_master_btn.clicked.connect(lambda: self.passwords.change_master(dlg.vault_path()))
+        from .qtcompat import exec_dialog
+        if not exec_dialog(dlg):
+            return
+        before = dict(self.settings)
+        dlg.apply_to(before)
+        self.passwords.apply_options(dlg.selected_backend(), before.get("vault_file", ""))
+
+    def run_startup_tasks(self) -> None:
+        """Move passwords an older Skiff left in plain text in sites.json into
+        the keychain or vault (asks once; see PasswordManager.migrate_plaintext)."""
+        sites = load_sites()
+        legacy = plaintext_passwords(sites)
+        if legacy:
+            self.passwords.migrate_plaintext(sites, legacy)
 
     def _help(self) -> None:
         from .help_dialogs import HelpDialog

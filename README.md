@@ -10,6 +10,7 @@ Cinnamon, on X11 or Wayland.
 | WinSCP habit | Skiff SFTP |
 |---|---|
 | Site Manager | `Ctrl+S`: save host, user, port, key or password |
+| Saved passwords | System keychain or an encrypted vault (Options ▸ Passwords) |
 | Local \| Remote panes | Same commander layout |
 | F5 Copy / F6 Move | Upload or download, depending on the focused pane |
 | F7 New folder | Local or remote |
@@ -37,10 +38,10 @@ Building from source is only needed for development.
 
 ```bash
 # Rocky Linux 9  (PyQt5 from AppStream)
-sudo dnf install -y ./skiff-1.0.0-1.el9.noarch.rpm
+sudo dnf install -y ./skiff-1.1.0-1.el9.noarch.rpm
 
 # Rocky Linux 10 (PyQt6 from AppStream)
-sudo dnf install -y ./skiff-1.0.0-1.el10.noarch.rpm
+sudo dnf install -y ./skiff-1.1.0-1.el10.noarch.rpm
 ```
 
 All hard dependencies come from BaseOS and AppStream, so **EPEL and CRB are
@@ -52,6 +53,7 @@ not required**.
 | Qt bindings | python3-qt5-base | python3-pyqt6-base |
 | Crypto | python3-cryptography | python3-cryptography |
 | SSH tools | openssh-clients | openssh-clients |
+| Keychain (saved passwords) | python3-gobject-base, libsecret | python3-gobject-base, libsecret |
 | Recommended (AppStream) | qt5-qtsvg, qt5-qtwayland | qt6-qtsvg, qt6-qtwayland |
 | Recommended (EPEL) | python3-paramiko | python3-paramiko |
 
@@ -72,8 +74,9 @@ If EPEL is already enabled when you install Skiff, dnf pulls in paramiko
 automatically as a recommended package.
 
 Without paramiko, Skiff uses the system OpenSSH tools (`ssh` and `sftp`).
-Agent and key auth still work, and password auth goes through a temporary
-SSH_ASKPASS helper. Remote listings need `python3` on the server for the
+Agent and key auth still work, and passwords and key passphrases go to ssh
+through SSH_ASKPASS and a private Unix socket (never a file, the command
+line or the environment). Remote listings need `python3` on the server for the
 OpenSSH backend.
 
 ## Use
@@ -107,9 +110,30 @@ Press `F1` in the app for the full help page. The same text is in
 | `Backspace` | Parent directory |
 | `Enter` | Open folder / open file |
 
-Sites are stored in `~/.config/skiff/sites.json` (mode 600). Passwords are
-saved only if you tick **Remember password**. Window and view settings are in
-`~/.config/skiff/settings.json`.
+Sites are stored in `~/.config/skiff/sites.json` (mode 600). Window and view
+settings are in `~/.config/skiff/settings.json`.
+
+## Saved passwords
+
+Choose where passwords are kept in **Options ▸ Passwords** (the same choices
+as MultiSSH Manager):
+
+| Store passwords | What it does |
+|---|---|
+| Don't save passwords | Type the password at each login (default) |
+| System keychain (GNOME Keyring / Secret Service) | Your login keyring via libsecret; unlocked when you log in |
+| Encrypted vault file (master password) | `~/.config/skiff/vault.json`, AES-256-GCM with a scrypt-derived key; unlocked once per session |
+
+Tick **Save password** in the Site Manager to store a site's password or key
+passphrase; untick it to forget it. **Change Master Password…** is in
+Options ▸ Passwords and **Lock Password Vault** is in the Options menu.
+Switching stores offers to move (or delete) the saved passwords. The keychain
+choice is greyed out when no Secret Service is running (e.g. over SSH); use
+the vault there.
+
+`sites.json` never holds passwords. Skiff 1.0 stored remembered passwords in
+plain text there; on first start, 1.1 moves them into the store you choose
+and rewrites the file without them.
 
 ## Run from the source tree
 
@@ -127,17 +151,17 @@ python3 -m skiff
 
 ```bash
 # Natively on Rocky 9 or 10 (builds for that release)
-sudo dnf install -y rpm-build python3 desktop-file-utils
+sudo dnf install -y rpm-build python3 python3-cryptography python3-gobject-base libsecret desktop-file-utils
 ./build.sh
 
 # For both releases, using podman or docker
 ./build.sh 9 10
 ```
 
-Output goes to `out/`: `skiff-1.0.0-1.el9.noarch.rpm`,
-`skiff-1.0.0-1.el10.noarch.rpm`, the matching `.src.rpm` files and
-`skiff-1.0.0.tar.gz`. You can also rebuild from a source RPM with
-`rpmbuild --rebuild skiff-1.0.0-1.el9.src.rpm`.
+Output goes to `out/`: `skiff-1.1.0-1.el9.noarch.rpm`,
+`skiff-1.1.0-1.el10.noarch.rpm`, the matching `.src.rpm` files and
+`skiff-1.1.0.tar.gz`. You can also rebuild from a source RPM with
+`rpmbuild --rebuild skiff-1.1.0-1.el9.src.rpm`.
 
 ## Tests
 

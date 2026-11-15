@@ -15,7 +15,7 @@ class HelpTests(unittest.TestCase):
     def test_topics_cover_required_areas(self):
         headings = " ".join(h for h, _ in help_content.HELP_TOPICS).lower()
         for word in ("connecting", "host keys", "authentication", "browsing",
-                     "uploading", "queue", "settings", "troubleshooting"):
+                     "uploading", "queue", "saved passwords", "settings", "troubleshooting"):
             self.assertIn(word, headings)
 
     def test_shortcuts_include_f1(self):

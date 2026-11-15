@@ -57,8 +57,20 @@ If the key changed on purpose (the server was rebuilt), remove the old line with
 Authentication has three choices:
   • SSH agent / default keys: uses ssh-agent and the keys in ~/.ssh. This is the closest match to WinSCP with Pageant.
   • Private key file: pick the key with the … button. If the key has a passphrase, put it in the "Password / key passphrase" field.
-  • Password: type the password. Tick "Remember password" to store it in ~/.config/skiff/sites.json (mode 600). If you leave it unticked, the password is not written to disk and you type it again next time.
-Password login works best with paramiko. Without it, Skiff hands the password to ssh through a temporary SSH_ASKPASS helper that is deleted on disconnect.
+  • Password: type the password. Tick "Save password" to keep it in the system keychain or the encrypted vault (see "Saved passwords"). If saving is off or the box is unticked, the password is used for that login only.
+With paramiko the password goes straight to paramiko. Without it, Skiff hands it to ssh/sftp through SSH_ASKPASS and a private socket readable only by you; it never appears in a file, the command line or the environment, and ssh gets one try with it so a wrong password can't lock the account.
+
+## Saved passwords
+
+Choose where passwords are kept in Options ▸ Passwords:
+  • Don't save passwords: you type the password each time you log in.
+  • System keychain: your login keyring (GNOME Keyring / KWallet, through the Secret Service). Unlocked when you log in; no extra password.
+  • Encrypted vault: a file encrypted with AES-256-GCM using a key derived from a master password (scrypt). Works on any machine, including headless or airgapped ones. You enter the master password once per session; Options ▸ Lock Password Vault locks it again. The vault file defaults to ~/.config/skiff/vault.json; change it in Options ▸ Passwords.
+To save a password, type it in the site's Password field in the Site Manager with "Save password" ticked (typing ticks it for you), then click Save or Login. The field then shows "Saved — type to replace". Untick Save password to forget it. Deleting a site deletes its saved password; Duplicate does not copy it. The same field holds a key passphrase for "Private key file" sites.
+Change Master Password… (Options ▸ Passwords) re-encrypts the vault with a new master password. A forgotten master password cannot be recovered: delete the vault file and save the passwords again.
+Switching storage in Options offers to move your saved passwords to the new store. Switching to "Don't save passwords" offers to delete them; Cancel keeps them where they are in case you switch back.
+If the keychain isn't available (no Secret Service running, for example over SSH or on a server without a desktop), the keychain choice is greyed out with the reason; use the encrypted vault. If a saved password can't be read at login (keychain locked or the unlock was cancelled), Skiff asks for the password instead.
+Upgrading from Skiff 1.0: passwords that 1.0 kept in plain text in sites.json are moved on first start into the store you pick (keychain or vault), or deleted if you choose not to save them. sites.json never holds a password after that.
 
 ## Browsing files
 
@@ -89,8 +101,9 @@ Every copy, move, drop and remote open becomes a row in the queue at the bottom 
 ## Settings and config files
 
 Skiff keeps its files in ~/.config/skiff/ ($XDG_CONFIG_HOME/skiff if that is set). The folder is mode 700 and the files are mode 600.
-  • sites.json: saved sites. Passwords are stored only for sites with "Remember password" ticked.
-  • settings.json: window size, queue height, show hidden files and confirm deletes.
+  • sites.json: saved sites. It never contains passwords; sites with "Save password" ticked have theirs in the keychain or the vault.
+  • vault.json: the encrypted password vault, if you use one.
+  • settings.json: window size, queue height, show hidden files, confirm deletes, and where passwords are kept.
 To start fresh, quit Skiff and delete ~/.config/skiff/. To move your sites to another computer, copy sites.json.
 
 ## Troubleshooting
@@ -98,7 +111,9 @@ To start fresh, quit Skiff and delete ~/.config/skiff/. To move your sites to an
   • "Host key mismatch" or "not found in known_hosts": see Host keys.
   • "Authentication failed": check the user name and auth type. For key auth, check that the key file exists and the server has the public key in ~/.ssh/authorized_keys. For agent auth, run ssh-add -l to see loaded keys.
   • "Could not connect … timed out": check the host, the port, and that sshd is running and the firewall allows it.
-  • Password login fails without paramiko: install python3-paramiko from EPEL (sudo dnf install epel-release, then sudo dnf install python3-paramiko).
+  • "Wrong master password (or the vault file was modified)": the vault could not be decrypted. Try again; if the master password is lost, delete the vault file and save the passwords again.
+  • "System keychain not available": no Secret Service is running in this session (common over SSH or without a desktop). Start GNOME Keyring or KWallet, or switch to the encrypted vault in Options ▸ Passwords.
+  • Keyboard-interactive or one-time-code logins: install python3-paramiko from EPEL, or use key or agent auth.
   • Remote folders do not list with the OpenSSH backend: the server needs python3, or install python3-paramiko on this computer.
   • Window looks wrong on Wayland: try QT_QPA_PLATFORM=xcb skiff.
   • Command-line: skiff --help and skiff --version.

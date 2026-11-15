@@ -2,8 +2,8 @@
 # Build Skiff SRPM + noarch RPM. Run inside a Rocky Linux 9 or 10 container
 # with the source tree mounted at /work. Output goes to /work/out/.
 set -euo pipefail
-VERSION="1.0.0"
-dnf -y -q install rpm-build python3 tar gzip desktop-file-utils
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "${WORK:-/work}/skiff/__init__.py")"
+dnf -y -q install rpm-build python3 tar gzip desktop-file-utils python3-cryptography python3-gobject-base libsecret
 TOP=/root/rpmbuild
 mkdir -p ${TOP}/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 WORK="${WORK:-/work}"

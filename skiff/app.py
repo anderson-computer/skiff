@@ -6,7 +6,7 @@ import os
 import sys
 
 from . import APP_ID, APP_NAME, __version__
-from .qtcompat import QApplication, QIcon, Qt
+from .qtcompat import QApplication, QIcon, Qt, QTimer
 
 
 def _force_fusion(app: QApplication) -> None:
@@ -73,6 +73,7 @@ def main(argv=None) -> int:
     if not icon.isNull():
         win.setWindowIcon(icon)
     win.show()
+    QTimer.singleShot(0, win.run_startup_tasks)
     try:
         return app.exec_()
     except AttributeError:

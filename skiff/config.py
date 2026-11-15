@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
+import tempfile
 import uuid
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
@@ -30,6 +32,34 @@ def sites_path() -> str:
 
 def settings_path() -> str:
     return os.path.join(config_dir(), SETTINGS_FILE)
+
+
+def atomic_write(path: str, text: str, backup: bool = False) -> None:
+    """Write text to path atomically with mode 0600 from the start (the
+    temporary file is created private, so nothing is ever world-readable).
+    With backup=True the previous version is kept as path.bak."""
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    if backup and os.path.exists(path):
+        try:
+            shutil.copy2(path, path + ".bak")
+            os.chmod(path + ".bak", 0o600)
+        except OSError:
+            pass
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _chmod_private(path: str) -> None:
@@ -81,19 +111,26 @@ def load_sites() -> List[Dict[str, Any]]:
 
 
 def save_sites(sites: List[Dict[str, Any]]) -> None:
+    """Write sites.json. Passwords are never written here: a site with
+    save_password set has its password in the keychain or vault (see
+    secret_store), keyed by the site id."""
     path = sites_path()
     stored = []
     for site in sites:
         item = deepcopy(site)
-        if not item.get("save_password"):
-            item["password"] = ""
+        item.pop("password", None)
+        item["save_password"] = bool(item.get("save_password"))
         stored.append(item)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"version": 1, "sites": stored}, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+    atomic_write(path, json.dumps({"version": 2, "sites": stored}, indent=2) + "\n")
     _chmod_private(path)
+
+
+def plaintext_passwords(sites: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Passwords that an older Skiff stored in plain text in sites.json,
+    keyed by site id. load_sites() keeps them in memory only so they can be
+    migrated into the keychain or vault on first run."""
+    return {s["id"]: s["password"] for s in sites
+            if s.get("password") and s.get("id")}
 
 
 def load_settings() -> Dict[str, Any]:
@@ -106,6 +143,8 @@ def load_settings() -> Dict[str, Any]:
         "left_ratio": 1,
         "right_ratio": 1,
         "confirm_delete": True,
+        "password_backend": "none",  # none | keyring | vault
+        "vault_file": "",            # "" = ~/.config/skiff/vault.json
     }
     path = settings_path()
     if not os.path.isfile(path):
@@ -122,11 +161,7 @@ def load_settings() -> Dict[str, Any]:
 
 def save_settings(settings: Dict[str, Any]) -> None:
     path = settings_path()
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(settings, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+    atomic_write(path, json.dumps(settings, indent=2) + "\n")
     _chmod_private(path)
 
 

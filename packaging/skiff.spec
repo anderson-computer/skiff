@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           skiff
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        WinSCP-style dual-pane SFTP client for Rocky Linux 9 and 10
 License:        MIT
@@ -11,10 +11,23 @@ Source0:        %{name}-%{version}.tar.gz
 BuildArch:      noarch
 BuildRequires:  python3
 BuildRequires:  desktop-file-utils
+# Unit tests in %%check: vault (cryptography) and keychain detection (gi + libsecret).
+BuildRequires:  python3-cryptography
+BuildRequires:  python3-gobject-base
+BuildRequires:  libsecret
 
 Requires:       python3
 Requires:       openssh-clients
+# AES-256-GCM + scrypt for the encrypted password vault (BaseOS on EL9/EL10).
 Requires:       python3-cryptography
+# System keychain for saved passwords: libsecret's Secret-1 typelib through
+# PyGObject. Both are small and in the stock repos on EL9 and EL10
+# (python3-gobject-base: BaseOS, libsecret: AppStream). They are hard
+# Requires so the keychain option works on any desktop out of the box; with
+# no Secret Service running (headless, over SSH) Skiff greys the option out
+# and the encrypted vault is used instead.
+Requires:       python3-gobject-base
+Requires:       libsecret
 
 # Qt bindings (all from AppStream, no EPEL/CRB needed):
 #   EL9  -> PyQt5 (python3-qt5-base)
@@ -45,6 +58,8 @@ Features:
  - Dual-pane file manager (copy, move, mkdir, delete, rename, chmod)
  - Drag-and-drop and F5/F6/F7/F8/F9 shortcuts
  - Transfer queue with progress
+ - Saved passwords in the system keychain (libsecret) or an encrypted
+   vault file (AES-256-GCM, scrypt master password)
  - Uses python3-paramiko when installed (EPEL), otherwise system OpenSSH
 
 %prep
@@ -60,6 +75,8 @@ rm -rf %{buildroot}
 
 install -d %{buildroot}/opt/skiff
 cp -a skiff %{buildroot}/opt/skiff/
+# SSH_ASKPASS helper run by ssh/sftp.
+chmod 0755 %{buildroot}/opt/skiff/skiff/askpass.py
 
 install -d %{buildroot}%{_bindir}
 install -m 0755 bin/skiff %{buildroot}%{_bindir}/skiff
@@ -101,6 +118,25 @@ fi
 %{_datadir}/pixmaps/skiff.svg
 
 %changelog
+* Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.1.0-1
+- Saved passwords with the same options as MultiSSH Manager 2.2.0:
+  Options > Passwords to choose "Don't save passwords", the system keychain
+  (GNOME Keyring / Secret Service via libsecret) or an encrypted vault file
+  (AES-256-GCM, scrypt-derived master password), vault file location,
+  Change Master Password, Options > Lock Password Vault, and moving or
+  deleting saved passwords when the store changes
+- Site Manager: "Save password" per site (untick to forget); deleting a site
+  deletes its saved password; duplicates don't copy it
+- Passwords that 1.0 kept in plain text in sites.json are moved into the
+  chosen store on first start; sites.json never holds passwords now
+- OpenSSH backend: passwords and key passphrases go to ssh through
+  SSH_ASKPASS and a private 0600 Unix socket (peer uid + one-time token)
+  instead of a temporary script; one password try per connection
+- Fix OpenSSH backend password logins for transfers: sftp's -b forced
+  BatchMode=yes, so password sites could list but not upload/download
+- Config files are written atomically with mode 0600 from the start
+- Requires python3-gobject-base and libsecret (stock BaseOS/AppStream)
+
 * Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.0.0-1
 - Initial release as Skiff SFTP for Rocky Linux 9 (PyQt5) and 10 (PyQt6)
 - Use system python3-paramiko (EPEL) instead of a vendored copy

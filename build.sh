@@ -12,7 +12,7 @@ if [ $# -gt 0 ]; then
 fi
 
 command -v rpmbuild >/dev/null 2>&1 || {
-    echo "rpmbuild not found. Install it:  sudo dnf install -y rpm-build python3 desktop-file-utils" >&2
+    echo "rpmbuild not found. Install it:  sudo dnf install -y rpm-build python3 python3-cryptography python3-gobject-base libsecret desktop-file-utils" >&2
     echo "Or build in containers:          ./build.sh 9 10" >&2
     exit 1
 }

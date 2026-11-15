@@ -30,9 +30,9 @@ Download the RPMs from the [latest release](https://github.com/mike0615/skiff/re
 
 ```
 # Rocky Linux 9
-sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.1.0/skiff-1.1.0-1.el9.noarch.rpm
+sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.2.0/skiff-1.2.0-1.el9.noarch.rpm
 # Rocky Linux 10
-sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.1.0/skiff-1.1.0-1.el10.noarch.rpm
+sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.2.0/skiff-1.2.0-1.el10.noarch.rpm
 ```
 
 Building from source is only needed for development.

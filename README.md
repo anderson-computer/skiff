@@ -24,6 +24,17 @@ Cinnamon, on X11 or Wayland.
 
 Two dist-tagged noarch RPMs are provided. Use the one that matches your release.
 
+Download the RPMs from the [latest release](https://github.com/mike0615/skiff/releases/latest), or install directly:
+
+```
+# Rocky Linux 9
+sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.0.0/skiff-1.0.0-1.el9.noarch.rpm
+# Rocky Linux 10
+sudo dnf install https://github.com/mike0615/skiff/releases/download/v1.0.0/skiff-1.0.0-1.el10.noarch.rpm
+```
+
+Building from source is only needed for development.
+
 ```bash
 # Rocky Linux 9  (PyQt5 from AppStream)
 sudo dnf install -y ./skiff-1.0.0-1.el9.noarch.rpm

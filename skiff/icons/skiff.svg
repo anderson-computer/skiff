@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Skiff SFTP</title>
+  <rect x="4" y="4" width="120" height="120" rx="18" fill="#1f4e79"/>
+  <rect x="16" y="28" width="42" height="72" rx="4" fill="#f4f7fb" stroke="#9bb4c8" stroke-width="2"/>
+  <rect x="70" y="28" width="42" height="72" rx="4" fill="#e8f1fa" stroke="#5b8db8" stroke-width="2"/>
+  <rect x="22" y="36" width="30" height="6" rx="1" fill="#2e75b6"/>
+  <rect x="22" y="46" width="24" height="4" rx="1" fill="#b8c7d6"/>
+  <rect x="22" y="54" width="28" height="4" rx="1" fill="#b8c7d6"/>
+  <rect x="76" y="36" width="30" height="6" rx="1" fill="#2e75b6"/>
+  <rect x="76" y="46" width="24" height="4" rx="1" fill="#8fb4d4"/>
+  <rect x="76" y="54" width="28" height="4" rx="1" fill="#8fb4d4"/>
+  <path d="M60 62 h8 l-2 4 8 0 -10 12 3-8 -8 0 z" fill="#f2c14e"/>
+</svg>

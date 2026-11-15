@@ -30,6 +30,8 @@ class SftpWorker(QObject):
             home = self.backend.connect(site)
             self._site = site
             label = "%s@%s:%s" % (site.get("username"), site.get("host"), site.get("port") or 22)
+            if getattr(self.backend, "sudo_user", ""):
+                label += "  [sudo: %s]" % self.backend.sudo_user
             self.connected.emit(home, label)
         except SftpError as exc:
             self.error.emit(str(exc))

@@ -85,6 +85,9 @@ def default_site() -> Dict[str, Any]:
         "local_dir": os.path.expanduser("~"),
         "timeout": 20,
         "strict_host": True,
+        "sudo": False,        # start the remote sftp-server through sudo -n
+        "sudo_user": "",      # "" = root
+        "sftp_server": "",    # "" = auto-detect
     }
 
 

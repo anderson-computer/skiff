@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from . import APP_NAME, __version__
 from .config import load_settings, load_sites, plaintext_passwords, save_settings
 from .passwords import PasswordManager, PasswordOptionsDialog
+from . import sudo as sudo_mod
 from .file_panel import FilePanel
 from .models import FileEntry, posix_join
 from .qtcompat import (
@@ -36,6 +37,7 @@ from .qtcompat import (
     qt_echo,
     qt_key,
     qt_msg_btn,
+    qt_msg_icon,
     qt_orient,
     qt_shortcut_context,
 )
@@ -65,6 +67,8 @@ class MainWindow(QMainWindow):
         self.site: Optional[Dict] = None
         self.remote_home = "/"
         self.connected = False
+        self.sudo_as = ""          # remote user while connected with sudo
+        self._sudo_warned = False  # the once-per-connection write warning was accepted
         self._queue: List[tuple] = []
         self._active_job: Optional[str] = None
         self._pending_refresh = False
@@ -114,7 +118,14 @@ class MainWindow(QMainWindow):
         self.status_conn = QLabel("Disconnected")
         self.status_proto = QLabel("SFTP")
         self.status_busy = QLabel("")
+        # Shown while the remote side runs as another user through sudo.
+        self.status_sudo = QLabel("")
+        self.status_sudo.setStyleSheet(
+            "QLabel { background: #b00020; color: white; font-weight: bold; padding: 1px 6px; border-radius: 3px; }")
+        self.status_sudo.setToolTip("The remote SFTP server runs through sudo: changes are made as this user.")
+        self.status_sudo.hide()
         status.addWidget(self.status_conn, 1)
+        status.addPermanentWidget(self.status_sudo)
         status.addPermanentWidget(self.status_proto)
         status.addPermanentWidget(self.status_busy)
 
@@ -307,6 +318,11 @@ class MainWindow(QMainWindow):
 
     def _set_connected(self, ok: bool, label: str = "") -> None:
         self.connected = ok
+        self._sudo_warned = False
+        if not ok:
+            self.sudo_as = ""
+        self.status_sudo.setText("sudo: %s" % self.sudo_as if self.sudo_as else "")
+        self.status_sudo.setVisible(bool(self.sudo_as))
         self.remote.set_connected(ok, label)
         self.act_disconnect.setEnabled(ok)
         for act in (self.act_copy, self.act_move):
@@ -323,9 +339,40 @@ class MainWindow(QMainWindow):
 
     def _on_connected(self, home: str, label: str) -> None:
         self.remote_home = home or "/"
+        site = self.site or {}
+        self.sudo_as = ""
+        if sudo_mod.enabled(site):
+            try:
+                self.sudo_as = sudo_mod.sudo_user(site)
+            except sudo_mod.SudoConfigError:
+                self.sudo_as = "?"
         self._set_connected(True, label)
         start = (self.site or {}).get("remote_dir") or home
         self.req_list.emit(start, self.act_hidden.isChecked())
+
+    def _confirm_sudo_write(self, what: str) -> bool:
+        """Once per connection, warn before changing files as root via sudo."""
+        if not self.sudo_as or self._sudo_warned:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(qt_msg_icon("Warning"))
+        box.setWindowTitle("%s — sudo: %s" % (APP_NAME, self.sudo_as))
+        box.setText("You are connected with sudo as %s." % self.sudo_as)
+        box.setInformativeText(
+            "%s will be done as %s on %s. Files can be overwritten or deleted without the "
+            "usual permission checks, including system files.\n\nContinue? Skiff asks once per connection."
+            % (what, self.sudo_as, (self.site or {}).get("host", "the server")))
+        box.setStandardButtons(qt_msg_btn("Yes") | qt_msg_btn("No"))
+        box.setDefaultButton(qt_msg_btn("No"))
+        if self.ask_sudo_write(box):
+            self._sudo_warned = True
+            return True
+        return False
+
+    def ask_sudo_write(self, box) -> bool:
+        """Show the sudo warning; returns True to go ahead (overridable in tests)."""
+        from .qtcompat import exec_dialog
+        return exec_dialog(box) == qt_msg_btn("Yes")
 
     def _on_disconnected(self) -> None:
         self._set_connected(False)
@@ -394,6 +441,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Select one or more files.")
             return
         upload = not src_panel.remote
+        if (upload or move) and not self._confirm_sudo_write(
+                "Uploading (and overwriting existing files)" if upload else "Deleting the remote originals after download"):
+            return
         for entry in items:
             if upload:
                 dest = posix_join(dst_panel.path or self.remote_home, entry.name)
@@ -409,6 +459,8 @@ class MainWindow(QMainWindow):
 
     def _drop_on_remote(self, paths: List[str]) -> None:
         if not self.connected:
+            return
+        if not self._confirm_sudo_write("Uploading (and overwriting existing files)"):
             return
         for path in paths:
             path = path.strip()
@@ -518,6 +570,8 @@ class MainWindow(QMainWindow):
         items = panel.selected()
         if not items:
             return
+        if panel.remote and not self._confirm_sudo_write("Deleting"):
+            return
         if self.act_confirm.isChecked():
             names = "\n".join(e.name for e in items[:10])
             extra = "" if len(items) <= 10 else "\n… and %d more" % (len(items) - 10)
@@ -555,6 +609,8 @@ class MainWindow(QMainWindow):
             return
         name = name.strip()
         if panel.remote:
+            if not self._confirm_sudo_write("Renaming (which can replace an existing file)"):
+                return
             dest = posix_join(panel.path, name)
             self.req_rename.emit(entry.path, dest)
         else:
@@ -586,6 +642,8 @@ class MainWindow(QMainWindow):
                     value = int(mode.strip(), 8)
                 except ValueError:
                     QMessageBox.warning(self, APP_NAME, "Invalid octal mode.")
+                    return
+                if not self._confirm_sudo_write("Changing permissions"):
                     return
                 self.req_chmod.emit(e.path, value)
         else:

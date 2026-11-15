@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           skiff
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        WinSCP-style dual-pane SFTP client for Rocky Linux 9 and 10
 License:        MIT
@@ -60,6 +60,8 @@ Features:
  - Transfer queue with progress
  - Saved passwords in the system keychain (libsecret) or an encrypted
    vault file (AES-256-GCM, scrypt master password)
+ - Optional per-site sudo mode: run the remote sftp-server as root (or
+   another user) with passwordless sudo
  - Uses python3-paramiko when installed (EPEL), otherwise system OpenSSH
 
 %prep
@@ -118,6 +120,19 @@ fi
 %{_datadir}/pixmaps/skiff.svg
 
 %changelog
+* Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.2.0-1
+- Site Manager: "Connect with sudo (run SFTP server as root)" with an
+  optional sudo user (default root) and sftp-server path (default:
+  auto-detect /usr/libexec/openssh, /usr/lib/openssh, /usr/lib/ssh)
+- paramiko backend: SFTP over a session channel running
+  "sudo -n -u USER sftp-server"; OpenSSH backend: sftp -s with the same
+  command, and listings / folder deletes through the SFTP server
+- Clear error with a sample NOPASSWD sudoers line when sudo wants a
+  password; sudo passwords are never asked for or stored
+- Red "sudo: USER" status badge and title suffix; confirm once per
+  connection before the first remote upload, move, delete, rename or chmod
+- Help: "Connecting with sudo", "Setting up sudoers" and troubleshooting
+
 * Sat Nov 14 2026 Mike Anderson <mike@andersoncomputer.us> - 1.1.0-1
 - Saved passwords with the same options as MultiSSH Manager 2.2.0:
   Options > Passwords to choose "Don't save passwords", the system keychain

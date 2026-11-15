@@ -108,6 +108,42 @@ Upgrading from Skiff 1.0: passwords that 1.0 kept in plain text in \
 sites.json are moved on first start into the store you pick (keychain \
 or vault), or deleted if you choose not to save them. sites.json never \
 holds a password after that."""),
+    ("Connecting with sudo (as root)", """\
+Tick "Connect with sudo (run SFTP server as root)" in the Site Manager to \
+browse and change files as root (or another user) on servers where you log \
+in as yourself. Skiff logs in as the site's user name as usual, then starts \
+the remote SFTP server with "sudo -n -u USER sftp-server" instead of the \
+normal SFTP subsystem.
+  • sudo user: who the SFTP server runs as. Empty means root.
+  • SFTP server path: empty means auto-detect. Skiff tries \
+/usr/libexec/openssh/sftp-server (RHEL, Rocky, Fedora), \
+/usr/lib/openssh/sftp-server (Debian, Ubuntu) and /usr/lib/ssh/sftp-server.
+While connected this way, the status bar shows a red "sudo: root" badge and \
+the title bar ends in [sudo: root]. The first upload, move, delete, rename \
+or chmod on each connection asks you to confirm, because root can overwrite \
+or delete any file, including system files.
+sudo must not ask for a password. The SFTP stream has no terminal for a \
+password prompt, so Skiff always runs sudo with -n and never asks for, \
+sends or stores a sudo password. Allow the sftp-server command without a \
+password on the server instead (see Setting up sudoers).
+Both backends support sudo. With paramiko the server is started on an SSH \
+session channel; with the OpenSSH tools Skiff passes the sudo command to \
+sftp -s, and listings and folder deletes go through the SFTP server too (so \
+the server doesn't need python3 or extra sudo rules)."""),
+    ("Setting up sudoers", """\
+On the server, run sudo visudo -f /etc/sudoers.d/skiff and add one line \
+(replace mike with the user you log in as):
+    mike ALL=(root) NOPASSWD: /usr/libexec/openssh/sftp-server
+Use /usr/lib/openssh/sftp-server on Debian or Ubuntu. Check the path with \
+ls -l on the server, and put the same path in the site's SFTP server path \
+box if it isn't one of the three Skiff tries.
+For a different sudo user, put that user in the parentheses, e.g. \
+(backup), and set sudo user to backup in the Site Manager.
+Test it from a terminal: ssh mike@server sudo -n -l \
+/usr/libexec/openssh/sftp-server should print the path rather than "a \
+password is required".
+This rule gives full file access as root over SFTP, the same as a root \
+login, so only add it for people who would be trusted with root."""),
     ("Browsing files", """\
 Each pane has a path box, plus Parent, Home, Root and Refresh buttons. Type a \
 path and press Enter to jump there. Click a column header to sort. Folders \
@@ -168,6 +204,17 @@ KWallet, or switch to the encrypted vault in Options ▸ Passwords.
 from EPEL, or use key or agent auth.
   • Remote folders do not list with the OpenSSH backend: the server needs \
 python3, or install python3-paramiko on this computer.
+  • "sudo requires a password on this host": sudo wants a password for the \
+sftp-server command. Add the NOPASSWD line from Setting up sudoers. Skiff \
+does not support sudo passwords.
+  • "may not run … with sudo": the rule is missing or names another path or \
+user. Compare sudo -n -l on the server with the site's sudo user and SFTP \
+server path.
+  • "Could not find sftp-server": set the SFTP server path in the Site \
+Manager (find it with: grep -ri sftp /etc/ssh/sshd_config*).
+  • With sudo and the OpenSSH backend, a symlink to a folder shows as a link \
+and can't be opened; type the target path in the path box, or install \
+python3-paramiko.
   • Window looks wrong on Wayland: try QT_QPA_PLATFORM=xcb skiff.
   • Command-line: skiff --help and skiff --version."""),
 ]

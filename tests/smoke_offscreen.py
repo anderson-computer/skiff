@@ -102,6 +102,44 @@ def main():
     sm.close()
     print("migration OK -> vault", pm.vault_path())
 
+    # sudo: Site Manager fields, status-bar indicator, warn once per connection
+    sudo_site = dict(config.default_site(), name="sudo", host="127.0.0.1", username="tester",
+                     sudo=True, sudo_user="", sftp_server="")
+    sm = SiteManagerDialog(win, [sudo_site], passwords=None)
+    sm.show(); app.processEvents()
+    assert sm.use_sudo.isChecked() and sm.sudo_user.isEnabled() and sm.sftp_server.isEnabled()
+    assert sm.sudo_user.placeholderText() == "root" and sm.sftp_server.placeholderText() == "auto-detect"
+    assert sm.use_sudo.text() == "Connect with sudo (run SFTP server as root)"
+    sm.sftp_server.setText("/usr/lib/ssh/sftp-server"); sm._flush()
+    assert sm.sites[0]["sudo"] and sm.sites[0]["sftp_server"] == "/usr/lib/ssh/sftp-server"
+    sm.use_sudo.setChecked(False); app.processEvents()
+    assert not sm.sudo_user.isEnabled()
+    sm.close()
+    from skiff.site_manager import sudo_problem
+    assert sudo_problem(dict(sudo_site, sudo_user="root;id")) and not sudo_problem(sudo_site)
+    win.site = sudo_site
+    win.blockSignals(True)  # don't ask the (unconnected) worker for a listing
+    win._on_connected("/root", "tester@127.0.0.1:22  [sudo: root]")
+    win.blockSignals(False)
+    app.processEvents()
+    assert win.status_sudo.text() == "sudo: root" and not win.status_sudo.isHidden(), win.status_sudo.text()
+    assert "[sudo: root]" in win.windowTitle(), win.windowTitle()
+    asked = []
+    win.ask_sudo_write = lambda box: asked.append(box.informativeText()) or True
+    assert win._confirm_sudo_write("Deleting") and win._confirm_sudo_write("Uploading")
+    assert len(asked) == 1 and "as root" in asked[0], asked
+    win._set_connected(False)
+    assert win.status_sudo.isHidden() and not win.sudo_as
+    win.site = sudo_site
+    win.blockSignals(True); win._on_connected("/root", "x"); win.blockSignals(False)
+    win.ask_sudo_write = lambda box: False
+    assert not win._confirm_sudo_write("Deleting")  # declined: nothing happens
+    win.site = dict(sudo_site, sudo=False)
+    win.blockSignals(True); win._on_connected("/home/tester", "x"); win.blockSignals(False)
+    assert win.status_sudo.isHidden() and win._confirm_sudo_write("Deleting")  # no sudo, no prompt
+    win._set_connected(False)
+    print("sudo UI OK", win.windowTitle())
+
     print("SMOKE OK")
     win.close()
     win.thread.quit()

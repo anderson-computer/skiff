@@ -11,6 +11,7 @@ Cinnamon, on X11 or Wayland.
 |---|---|
 | Site Manager | `Ctrl+S`: save host, user, port, key or password |
 | Saved passwords | System keychain or an encrypted vault (Options ▸ Passwords) |
+| sudo / root access | Per site: run the remote SFTP server through `sudo -n` (NOPASSWD) |
 | Local \| Remote panes | Same commander layout |
 | F5 Copy / F6 Move | Upload or download, depending on the focused pane |
 | F7 New folder | Local or remote |
@@ -38,10 +39,10 @@ Building from source is only needed for development.
 
 ```bash
 # Rocky Linux 9  (PyQt5 from AppStream)
-sudo dnf install -y ./skiff-1.1.0-1.el9.noarch.rpm
+sudo dnf install -y ./skiff-1.2.0-1.el9.noarch.rpm
 
 # Rocky Linux 10 (PyQt6 from AppStream)
-sudo dnf install -y ./skiff-1.1.0-1.el10.noarch.rpm
+sudo dnf install -y ./skiff-1.2.0-1.el10.noarch.rpm
 ```
 
 All hard dependencies come from BaseOS and AppStream, so **EPEL and CRB are
@@ -77,7 +78,7 @@ Without paramiko, Skiff uses the system OpenSSH tools (`ssh` and `sftp`).
 Agent and key auth still work, and passwords and key passphrases go to ssh
 through SSH_ASKPASS and a private Unix socket (never a file, the command
 line or the environment). Remote listings need `python3` on the server for the
-OpenSSH backend.
+OpenSSH backend (not in sudo mode, which lists through the SFTP server).
 
 ## Use
 
@@ -135,6 +136,30 @@ the vault there.
 plain text there; on first start, 1.1 moves them into the store you choose
 and rewrites the file without them.
 
+## Connecting with sudo
+
+Tick **Connect with sudo (run SFTP server as root)** in the Site Manager to
+work as root (or another **sudo user**) on a server where you log in as
+yourself. Skiff starts the remote SFTP server with
+`sudo -n -u USER /path/to/sftp-server`; the path is auto-detected
+(`/usr/libexec/openssh/sftp-server`, `/usr/lib/openssh/sftp-server`,
+`/usr/lib/ssh/sftp-server`) or set per site. Both backends support it.
+
+sudo has to allow that command **without a password**, because the SFTP
+stream has no terminal for a prompt. Skiff never asks for or stores a sudo
+password. On the server:
+
+```bash
+sudo visudo -f /etc/sudoers.d/skiff
+# add (use your login name; Debian/Ubuntu path is /usr/lib/openssh/sftp-server):
+mike ALL=(root) NOPASSWD: /usr/libexec/openssh/sftp-server
+```
+
+If sudo still wants a password, Skiff says so and shows the line to add.
+While connected with sudo the status bar shows a red **sudo: root** badge,
+the title ends in `[sudo: root]`, and the first upload, move, delete, rename
+or chmod on each connection asks for confirmation.
+
 ## Run from the source tree
 
 ```bash
@@ -158,10 +183,10 @@ sudo dnf install -y rpm-build python3 python3-cryptography python3-gobject-base 
 ./build.sh 9 10
 ```
 
-Output goes to `out/`: `skiff-1.1.0-1.el9.noarch.rpm`,
-`skiff-1.1.0-1.el10.noarch.rpm`, the matching `.src.rpm` files and
-`skiff-1.1.0.tar.gz`. You can also rebuild from a source RPM with
-`rpmbuild --rebuild skiff-1.1.0-1.el9.src.rpm`.
+Output goes to `out/`: `skiff-1.2.0-1.el9.noarch.rpm`,
+`skiff-1.2.0-1.el10.noarch.rpm`, the matching `.src.rpm` files and
+`skiff-1.2.0.tar.gz`. You can also rebuild from a source RPM with
+`rpmbuild --rebuild skiff-1.2.0-1.el9.src.rpm`.
 
 ## Tests
 

@@ -7,6 +7,10 @@ bottom, and the F-key commands you know from WinSCP. Skiff uses the Qt
 **Fusion** style, so it looks and works the same on KDE Plasma, GNOME and
 Cinnamon, on X11 or Wayland.
 
+![Skiff dual-pane SFTP window: local files on the left, a remote server on the right, and a finished upload in the transfer queue](docs/images/skiff-main.png)
+
+*Screenshot: Skiff with demo files against a local test SFTP server (no real hosts). The transfer queue shows a completed upload.*
+
 | WinSCP habit | Skiff SFTP |
 |---|---|
 | Site Manager | `Ctrl+S`: save host, user, port, key or password |

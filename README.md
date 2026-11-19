@@ -7,6 +7,8 @@ bottom, and the F-key commands you know from WinSCP. Skiff uses the Qt
 **Fusion** style, so it looks and works the same on KDE Plasma, GNOME and
 Cinnamon, on X11 or Wayland.
 
+**Who it's for:** Administrators who know WinSCP from Windows and want the same dual-pane SFTP workflow on Rocky Linux 9 and 10.
+
 | WinSCP habit | Skiff SFTP |
 |---|---|
 | Site Manager | `Ctrl+S`: save host, user, port, key or password |
@@ -217,3 +219,7 @@ QT_QPA_PLATFORM=offscreen python3 tests/smoke_offscreen.py   # window, Help and 
 ## License
 
 MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Mike Anderson.
+
+---
+
+**Part of the Cyber Chief toolkit** by Anderson Computer. Sibling projects: [Flagship](https://github.com/mike0615/flagship) · [Flagship Web](https://github.com/mike0615/flagship-web) · [Porthole](https://github.com/mike0615/porthole) · [Sonar](https://github.com/mike0615/sonar) · [Helm RDP](https://github.com/mike0615/helm-rdp) · [Pathfinder](https://github.com/mike0615/pathfinder) · [FleetOps](https://github.com/mike0615/fleet-ops) · [Dockyard](https://github.com/mike0615/dockyard) · [CommShack](https://github.com/mike0615/commshack).
